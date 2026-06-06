@@ -1,34 +1,34 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/efekckk/crypto-portfolio-tracker-api/internal/api"
+	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage"
 )
 
 func main() {
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	ctx := context.Background()
+	dsn := envOr("DATABASE_URL", "")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
+	pg, err := storage.Open(ctx, dsn)
+	if err != nil {
+		log.Fatalf("open postgres: %v", err)
+	}
+	defer pg.Close()
 
-	r.Get("/health", healthHandler)
+	srv := api.NewServer(storage.NewDeviceRepo(pg.Pool))
 
 	addr := ":" + envOr("PORT", "8080")
 	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, r); err != nil {
+	if err := http.ListenAndServe(addr, srv); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func envOr(key, fallback string) string {
