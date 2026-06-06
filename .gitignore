@@ -1,0 +1,25 @@
+# Binaries
+/bin/
+/api
+/worker
+*.exe
+*.out
+
+# Test artifacts
+*.test
+coverage.out
+coverage.html
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Vendor (we use go modules)
+/vendor/
