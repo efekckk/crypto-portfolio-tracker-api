@@ -22,7 +22,10 @@ func main() {
 	}
 	defer pg.Close()
 
-	srv := api.NewServer(storage.NewDeviceRepo(pg.Pool))
+	srv := api.NewServer(
+		storage.NewDeviceRepo(pg.Pool),
+		storage.NewAlertRepo(pg.Pool),
+	)
 
 	addr := ":" + envOr("PORT", "8080")
 	log.Printf("listening on %s", addr)

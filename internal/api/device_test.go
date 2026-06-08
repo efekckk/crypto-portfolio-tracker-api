@@ -17,7 +17,10 @@ import (
 
 func newServer(t *testing.T, h *storagetest.Harness) *api.Server {
 	t.Helper()
-	return api.NewServer(storage.NewDeviceRepo(h.Postgres.Pool))
+	return api.NewServer(
+		storage.NewDeviceRepo(h.Postgres.Pool),
+		storage.NewAlertRepo(h.Postgres.Pool),
+	)
 }
 
 func doJSON(t *testing.T, srv http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

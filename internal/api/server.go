@@ -10,16 +10,17 @@ import (
 )
 
 // Server bundles the chi router with the repos every handler reaches into.
-// cmd/api wires one of these at boot.
 type Server struct {
 	Router  chi.Router
 	Devices *storage.DeviceRepo
+	Alerts  *storage.AlertRepo
 }
 
-// NewServer builds a Server with the standard middleware stack and routes
-// the public endpoints. /health is mounted at the root; everything else
-// lives under /v1.
-func NewServer(devices *storage.DeviceRepo) *Server {
+// NewServer builds the chi router with the standard middleware stack and
+// mounts both public and authenticated routes. /health and /v1/devices are
+// public; everything else lives behind the requireDeviceID middleware so
+// handlers can rely on DeviceFromContext.
+func NewServer(devices *storage.DeviceRepo, alerts *storage.AlertRepo) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
@@ -28,18 +29,19 @@ func NewServer(devices *storage.DeviceRepo) *Server {
 	r.Get("/health", healthHandler)
 
 	dh := newDeviceHandler(devices)
+	ah := newAlertsHandler(alerts)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/devices", dh.register)
-		// Authenticated routes are mounted here in later tasks:
-		// r.Group(func(r chi.Router) {
-		//     r.Use(requireDeviceID(devices))
-		//     r.Get("/alerts", ...)
-		//     ...
-		// })
+		r.Group(func(r chi.Router) {
+			r.Use(requireDeviceID(devices))
+			r.Get("/alerts", ah.list)
+			r.Put("/alerts/{id}", ah.put)
+			r.Delete("/alerts/{id}", ah.delete)
+		})
 	})
 
-	return &Server{Router: r, Devices: devices}
+	return &Server{Router: r, Devices: devices, Alerts: alerts}
 }
 
 // ServeHTTP lets a Server satisfy http.Handler directly.
