@@ -25,6 +25,7 @@ func main() {
 	srv := api.NewServer(
 		storage.NewDeviceRepo(pg.Pool),
 		storage.NewAlertRepo(pg.Pool),
+		storage.NewHoldingRepo(pg.Pool),
 	)
 
 	addr := ":" + envOr("PORT", "8080")

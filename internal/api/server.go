@@ -11,16 +11,17 @@ import (
 
 // Server bundles the chi router with the repos every handler reaches into.
 type Server struct {
-	Router  chi.Router
-	Devices *storage.DeviceRepo
-	Alerts  *storage.AlertRepo
+	Router   chi.Router
+	Devices  *storage.DeviceRepo
+	Alerts   *storage.AlertRepo
+	Holdings *storage.HoldingRepo
 }
 
 // NewServer builds the chi router with the standard middleware stack and
 // mounts both public and authenticated routes. /health and /v1/devices are
 // public; everything else lives behind the requireDeviceID middleware so
 // handlers can rely on DeviceFromContext.
-func NewServer(devices *storage.DeviceRepo, alerts *storage.AlertRepo) *Server {
+func NewServer(devices *storage.DeviceRepo, alerts *storage.AlertRepo, holdings *storage.HoldingRepo) *Server {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
@@ -30,6 +31,7 @@ func NewServer(devices *storage.DeviceRepo, alerts *storage.AlertRepo) *Server {
 
 	dh := newDeviceHandler(devices)
 	ah := newAlertsHandler(alerts)
+	hh := newHoldingsHandler(holdings)
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/devices", dh.register)
@@ -38,10 +40,13 @@ func NewServer(devices *storage.DeviceRepo, alerts *storage.AlertRepo) *Server {
 			r.Get("/alerts", ah.list)
 			r.Put("/alerts/{id}", ah.put)
 			r.Delete("/alerts/{id}", ah.delete)
+			r.Get("/holdings", hh.list)
+			r.Put("/holdings/{coin_id}", hh.put)
+			r.Delete("/holdings/{coin_id}", hh.delete)
 		})
 	})
 
-	return &Server{Router: r, Devices: devices, Alerts: alerts}
+	return &Server{Router: r, Devices: devices, Alerts: alerts, Holdings: holdings}
 }
 
 // ServeHTTP lets a Server satisfy http.Handler directly.

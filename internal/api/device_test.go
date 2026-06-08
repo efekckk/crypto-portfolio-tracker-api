@@ -20,6 +20,7 @@ func newServer(t *testing.T, h *storagetest.Harness) *api.Server {
 	return api.NewServer(
 		storage.NewDeviceRepo(h.Postgres.Pool),
 		storage.NewAlertRepo(h.Postgres.Pool),
+		storage.NewHoldingRepo(h.Postgres.Pool),
 	)
 }
 
