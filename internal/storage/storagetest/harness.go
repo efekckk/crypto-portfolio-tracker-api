@@ -98,7 +98,7 @@ func (h *Harness) Fresh(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
 	_, err := h.Postgres.Pool.Exec(ctx,
-		`TRUNCATE devices, alerts, holdings, firings RESTART IDENTITY CASCADE`)
+		`TRUNCATE devices, alerts, holdings, firings, virtual_portfolios, virtual_trades RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
