@@ -13,7 +13,16 @@ import (
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/api"
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage"
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage/storagetest"
+	"github.com/efekckk/crypto-portfolio-tracker-api/internal/virtual"
 )
+
+// stubVirtualPricing is a no-op pricing implementation for tests that do not
+// need real CoinGecko data.
+type stubVirtualPricing struct{}
+
+func (stubVirtualPricing) FetchMany(_ context.Context, _ []string, _ string) (map[string]virtual.CachedPrice, error) {
+	return map[string]virtual.CachedPrice{}, nil
+}
 
 func newServer(t *testing.T, h *storagetest.Harness) *api.Server {
 	t.Helper()
@@ -21,6 +30,9 @@ func newServer(t *testing.T, h *storagetest.Harness) *api.Server {
 		storage.NewDeviceRepo(h.Postgres.Pool),
 		storage.NewAlertRepo(h.Postgres.Pool),
 		storage.NewHoldingRepo(h.Postgres.Pool),
+		storage.NewVirtualPortfolioRepo(h.Postgres.Pool),
+		storage.NewVirtualTradeRepo(h.Postgres.Pool),
+		stubVirtualPricing{},
 	)
 }
 

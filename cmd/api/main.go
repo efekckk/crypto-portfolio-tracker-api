@@ -7,7 +7,9 @@ import (
 	"os"
 
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/api"
+	"github.com/efekckk/crypto-portfolio-tracker-api/internal/eval"
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage"
+	"github.com/efekckk/crypto-portfolio-tracker-api/internal/virtual"
 )
 
 func main() {
@@ -22,10 +24,20 @@ func main() {
 	}
 	defer pg.Close()
 
+	markets := eval.NewCoinGeckoMarketsClient(
+		envOr("COINGECKO_BASE_URL", "https://api.coingecko.com/api/v3"),
+		os.Getenv("COINGECKO_API_KEY"),
+		nil,
+	)
+	pricing := virtual.NewPricingService(markets, "usd")
+
 	srv := api.NewServer(
 		storage.NewDeviceRepo(pg.Pool),
 		storage.NewAlertRepo(pg.Pool),
 		storage.NewHoldingRepo(pg.Pool),
+		storage.NewVirtualPortfolioRepo(pg.Pool),
+		storage.NewVirtualTradeRepo(pg.Pool),
+		pricing,
 	)
 
 	addr := ":" + envOr("PORT", "8080")
