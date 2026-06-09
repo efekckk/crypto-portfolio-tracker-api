@@ -1,0 +1,17 @@
+.git
+.gitignore
+.idea
+.vscode
+*.swp
+.DS_Store
+*.test
+coverage.out
+coverage.html
+README.md
+fly.toml
+Dockerfile
+.dockerignore
+.env
+.env.*
+/bin
+/vendor
