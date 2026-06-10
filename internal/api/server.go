@@ -9,6 +9,9 @@ import (
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage"
 )
 
+// tradesPerMinute is the production trade-endpoint cap per device.
+const tradesPerMinute = 20
+
 // Server bundles the chi router with the repos every handler reaches into.
 type Server struct {
 	Router            chi.Router
@@ -17,6 +20,9 @@ type Server struct {
 	Holdings          *storage.HoldingRepo
 	VirtualPortfolios *storage.VirtualPortfolioRepo
 	VirtualTrades     *storage.VirtualTradeRepo
+
+	// TradesLimiter is exposed so tests can inject a deterministic clock.
+	TradesLimiter *rateLimiter
 }
 
 // NewServer builds the chi router with the standard middleware stack and
@@ -41,6 +47,8 @@ func NewServer(
 	hh := newHoldingsHandler(holdings)
 	vh := newVirtualPortfolioHandler(virtualPortfolios, virtualTrades, virtualPricing)
 
+	tradesLimiter := newRateLimiter(float64(tradesPerMinute)/60.0, float64(tradesPerMinute))
+
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/devices", dh.register)
 		r.Group(func(r chi.Router) {
@@ -56,7 +64,8 @@ func NewServer(
 			r.Get("/virtual/portfolios/{id}", vh.getDetail)
 			r.Delete("/virtual/portfolios/{id}", vh.delete)
 			r.Get("/virtual/portfolios/{id}/quote", vh.quote)
-			r.Post("/virtual/portfolios/{id}/trades", vh.executeTrade)
+			r.With(rateLimitTrades(tradesLimiter)).
+				Post("/virtual/portfolios/{id}/trades", vh.executeTrade)
 			r.Get("/virtual/portfolios/{id}/trades", vh.listTrades)
 		})
 	})
@@ -64,6 +73,7 @@ func NewServer(
 	return &Server{
 		Router: r, Devices: devices, Alerts: alerts, Holdings: holdings,
 		VirtualPortfolios: virtualPortfolios, VirtualTrades: virtualTrades,
+		TradesLimiter: tradesLimiter,
 	}
 }
 
