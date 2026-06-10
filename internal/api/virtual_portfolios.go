@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -397,5 +398,214 @@ func (h *virtualPortfolioHandler) quote(w http.ResponseWriter, r *http.Request) 
 		FetchedAt:     cp.FetchedAt,
 		MaxBuyAmount:  maxBuy,
 		MaxSellAmount: maxSell,
+	})
+}
+
+// executeTrade handles POST /v1/virtual/portfolios/{id}/trades. The server
+// fetches the current price itself — clients can't supply one — and rejects
+// the trade if cash or holdings don't cover it. On success it returns the
+// inserted trade plus the recomputed portfolio detail so the iOS view can
+// refresh in one round trip.
+func (h *virtualPortfolioHandler) executeTrade(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	dev := DeviceFromContext(r.Context())
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"url id is not a valid UUID")
+		return
+	}
+
+	var body executeTradeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_payload", err.Error())
+		return
+	}
+	side := virtual.Side(strings.ToLower(strings.TrimSpace(body.Side)))
+	if side != virtual.SideBuy && side != virtual.SideSell {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			`side must be "buy" or "sell"`)
+		return
+	}
+	coinID := strings.TrimSpace(body.CoinID)
+	if coinID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"coin_id is required")
+		return
+	}
+	if !quoteCoinIDPattern.MatchString(coinID) {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"coin_id has an invalid shape")
+		return
+	}
+	if body.Amount <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"amount must be greater than zero")
+		return
+	}
+
+	// Resolve the portfolio and check ownership.
+	p, err := h.portfolios.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrVirtualPortfolioNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "portfolio not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if p.DeviceID != dev.DeviceID {
+		writeError(w, http.StatusForbidden, "forbidden",
+			"portfolio belongs to a different device")
+		return
+	}
+
+	// Compute the pre-trade state.
+	preTrades, err := h.trades.ListAllByPortfolio(r.Context(), p.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	preState := virtual.Compute(p.StartingBalance, preTrades, nil)
+
+	// Fetch the server-side current price. Never trust the client.
+	cp, err := h.pricing.FetchOne(r.Context(), coinID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not in markets") {
+			writeError(w, http.StatusUnprocessableEntity, "unprocessable",
+				"coin not found in markets snapshot")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "upstream_error",
+			"couldn't fetch current price")
+		return
+	}
+	price := cp.Coin.CurrentPrice
+	if price <= 0 {
+		writeError(w, http.StatusBadGateway, "upstream_error",
+			"markets response returned a non-positive price")
+		return
+	}
+
+	// Validate cash (buy) or holdings (sell). The epsilon match is the same
+	// 1e-9 the Compute fold uses to swallow IEEE 754 drift on sells.
+	const tradeEpsilon = 1e-9
+	switch side {
+	case virtual.SideBuy:
+		cost := body.Amount * price
+		if cost > preState.CashBalance+tradeEpsilon {
+			writeError(w, http.StatusUnprocessableEntity, "unprocessable",
+				"insufficient_cash")
+			return
+		}
+	case virtual.SideSell:
+		var heldAmount float64
+		for _, hold := range preState.Holdings {
+			if hold.CoinID == coinID {
+				heldAmount = hold.Amount
+				break
+			}
+		}
+		if body.Amount > heldAmount+tradeEpsilon {
+			writeError(w, http.StatusUnprocessableEntity, "unprocessable",
+				"insufficient_holdings")
+			return
+		}
+	}
+
+	// Insert the trade row.
+	now := time.Now().UTC()
+	tradeRow := virtual.Trade{
+		PortfolioID: p.ID,
+		Side:        side,
+		CoinID:      coinID,
+		Amount:      body.Amount,
+		Price:       price,
+		ExecutedAt:  now,
+	}
+	tradeID, err := h.trades.Insert(r.Context(), tradeRow)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	tradeRow.ID = tradeID
+
+	// Touch updated_at so the list endpoint sees the change without a full re-write.
+	if err := h.portfolios.Touch(r.Context(), p.ID, now); err != nil {
+		// Touch failing is not fatal — log via response is meaningless here;
+		// just surface as internal. The trade IS persisted.
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	// Recompute post-trade state with the newly inserted trade for the response.
+	postTrades := append(preTrades, tradeRow)
+	currentPrices := map[string]float64{coinID: price}
+	for _, t := range postTrades {
+		if _, ok := currentPrices[t.CoinID]; !ok {
+			// Best-effort: pull other coin prices in one batch so the post-trade
+			// portfolio snapshot reflects mark-to-market for ALL holdings, not
+			// just the coin we just traded.
+			currentPrices[t.CoinID] = 0
+		}
+	}
+	if len(currentPrices) > 1 {
+		ids := make([]string, 0, len(currentPrices))
+		for cid := range currentPrices {
+			if cid != coinID {
+				ids = append(ids, cid)
+			}
+		}
+		if priced, ferr := h.pricing.FetchMany(r.Context(), ids, "usd"); ferr == nil {
+			for cid, cp := range priced {
+				currentPrices[cid] = cp.Coin.CurrentPrice
+			}
+		}
+	}
+	postState := virtual.Compute(p.StartingBalance, postTrades, currentPrices)
+
+	// Refresh portfolio meta so the response carries the updated `UpdatedAt`.
+	refreshed, err := h.portfolios.Get(r.Context(), p.ID)
+	if err != nil {
+		// Already saved trade; degrade gracefully with the pre-update meta.
+		refreshed = p
+	}
+
+	holdings := make([]virtualHoldingDTO, 0, len(postState.Holdings))
+	for _, hp := range postState.Holdings {
+		holdings = append(holdings, virtualHoldingDTO{
+			CoinID:               hp.CoinID,
+			Amount:               hp.Amount,
+			AverageBuyPrice:      hp.AverageBuyPrice,
+			CurrentPrice:         hp.CurrentPrice,
+			CurrentValue:         hp.CurrentValue,
+			UnrealizedPnL:        hp.UnrealizedPnL,
+			UnrealizedPnLPercent: hp.UnrealizedPnLPercent,
+		})
+	}
+
+	writeJSON(w, http.StatusCreated, executeTradeResponse{
+		Trade: virtualTradeDTO{
+			ID:         tradeRow.ID,
+			Side:       string(tradeRow.Side),
+			CoinID:     tradeRow.CoinID,
+			Amount:     tradeRow.Amount,
+			Price:      tradeRow.Price,
+			ExecutedAt: tradeRow.ExecutedAt,
+		},
+		Portfolio: virtualPortfolioDetailResponse{
+			ID:              refreshed.ID.String(),
+			Name:            refreshed.Name,
+			StartingBalance: refreshed.StartingBalance,
+			CashBalance:     postState.CashBalance,
+			TotalValue:      postState.TotalValue,
+			RealizedPnL:     postState.RealizedPnL,
+			UnrealizedPnL:   postState.UnrealizedPnL,
+			TotalPnLPercent: postState.TotalPnLPercent,
+			Holdings:        holdings,
+			CreatedAt:       refreshed.CreatedAt,
+			UpdatedAt:       refreshed.UpdatedAt,
+		},
 	})
 }

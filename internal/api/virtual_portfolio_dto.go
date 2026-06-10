@@ -75,3 +75,29 @@ type virtualQuoteResponse struct {
 	MaxBuyAmount  float64   `json:"max_buy_amount"`
 	MaxSellAmount float64   `json:"max_sell_amount"`
 }
+
+// executeTradeRequest is the body of POST /v1/virtual/portfolios/{id}/trades.
+type executeTradeRequest struct {
+	Side   string  `json:"side"`
+	CoinID string  `json:"coin_id"`
+	Amount float64 `json:"amount"`
+}
+
+// virtualTradeDTO is the trade row returned in the trade response and in
+// the trade history endpoint.
+type virtualTradeDTO struct {
+	ID         int64     `json:"id"`
+	Side       string    `json:"side"`
+	CoinID     string    `json:"coin_id"`
+	Amount     float64   `json:"amount"`
+	Price      float64   `json:"price"`
+	ExecutedAt time.Time `json:"executed_at"`
+}
+
+// executeTradeResponse carries the newly inserted trade alongside the
+// portfolio's post-trade snapshot so the client doesn't need a follow-up
+// GET to refresh its view.
+type executeTradeResponse struct {
+	Trade     virtualTradeDTO                `json:"trade"`
+	Portfolio virtualPortfolioDetailResponse `json:"portfolio"`
+}
