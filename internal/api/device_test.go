@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/api"
+	"github.com/efekckk/crypto-portfolio-tracker-api/internal/domain"
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage"
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/storage/storagetest"
 	"github.com/efekckk/crypto-portfolio-tracker-api/internal/virtual"
@@ -22,6 +24,34 @@ type stubVirtualPricing struct{}
 
 func (stubVirtualPricing) FetchMany(_ context.Context, _ []string, _ string) (map[string]virtual.CachedPrice, error) {
 	return map[string]virtual.CachedPrice{}, nil
+}
+
+// fixedPricing returns a pre-set map regardless of input — handy for
+// asserting computed state with known prices.
+type fixedPricing struct {
+	prices map[string]virtual.CachedPrice
+}
+
+func (f fixedPricing) FetchMany(_ context.Context, ids []string, _ string) (map[string]virtual.CachedPrice, error) {
+	out := map[string]virtual.CachedPrice{}
+	for _, id := range ids {
+		if cp, ok := f.prices[id]; ok {
+			out[id] = cp
+		}
+	}
+	return out, nil
+}
+
+// failingPricing simulates CoinGecko being unreachable.
+type failingPricing struct{}
+
+func (failingPricing) FetchMany(_ context.Context, _ []string, _ string) (map[string]virtual.CachedPrice, error) {
+	return nil, errors.New("upstream down")
+}
+
+// domainCoin is a tiny convenience for building Coin values in tests.
+func domainCoin(id, name string, price float64) domain.Coin {
+	return domain.Coin{ID: id, Symbol: id, Name: name, CurrentPrice: price}
 }
 
 func newServer(t *testing.T, h *storagetest.Harness) *api.Server {

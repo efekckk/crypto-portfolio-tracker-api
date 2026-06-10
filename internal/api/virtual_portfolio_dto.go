@@ -36,3 +36,32 @@ type virtualPortfolioSummary struct {
 type virtualPortfoliosListResponse struct {
 	Portfolios []virtualPortfolioSummary `json:"portfolios"`
 }
+
+// virtualHoldingDTO is one coin position in the detail response. Per-coin
+// current price metrics are pointers so the wire format carries `null`
+// (not `0`) when the coin isn't in the markets snapshot.
+type virtualHoldingDTO struct {
+	CoinID               string   `json:"coin_id"`
+	Amount               float64  `json:"amount"`
+	AverageBuyPrice      float64  `json:"average_buy_price"`
+	CurrentPrice         *float64 `json:"current_price"`
+	CurrentValue         *float64 `json:"current_value"`
+	UnrealizedPnL        *float64 `json:"unrealized_pnl"`
+	UnrealizedPnLPercent *float64 `json:"unrealized_pnl_percent"`
+}
+
+// virtualPortfolioDetailResponse is the full detail payload for the
+// portfolio's "show" endpoint.
+type virtualPortfolioDetailResponse struct {
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	StartingBalance float64             `json:"starting_balance"`
+	CashBalance     float64             `json:"cash_balance"`
+	TotalValue      float64             `json:"total_value"`
+	RealizedPnL     float64             `json:"realized_pnl"`
+	UnrealizedPnL   float64             `json:"unrealized_pnl"`
+	TotalPnLPercent float64             `json:"total_pnl_percent"`
+	Holdings        []virtualHoldingDTO `json:"holdings"`
+	CreatedAt       time.Time           `json:"created_at"`
+	UpdatedAt       time.Time           `json:"updated_at"`
+}

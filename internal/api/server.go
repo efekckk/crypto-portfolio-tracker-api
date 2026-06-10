@@ -53,6 +53,8 @@ func NewServer(
 			r.Delete("/holdings/{coin_id}", hh.delete)
 			r.Post("/virtual/portfolios", vh.register)
 			r.Get("/virtual/portfolios", vh.list)
+			r.Get("/virtual/portfolios/{id}", vh.getDetail)
+			r.Delete("/virtual/portfolios/{id}", vh.delete)
 		})
 	})
 
