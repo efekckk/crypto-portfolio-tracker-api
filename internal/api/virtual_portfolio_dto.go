@@ -101,3 +101,11 @@ type executeTradeResponse struct {
 	Trade     virtualTradeDTO                `json:"trade"`
 	Portfolio virtualPortfolioDetailResponse `json:"portfolio"`
 }
+
+// virtualTradeHistoryResponse is the body of the trade history endpoint.
+// NextCursor is a pointer so the wire format carries `null` when there are
+// no further pages.
+type virtualTradeHistoryResponse struct {
+	Trades     []virtualTradeDTO `json:"trades"`
+	NextCursor *int64            `json:"next_cursor"`
+}

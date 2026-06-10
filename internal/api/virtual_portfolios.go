@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -607,5 +608,81 @@ func (h *virtualPortfolioHandler) executeTrade(w http.ResponseWriter, r *http.Re
 			CreatedAt:       refreshed.CreatedAt,
 			UpdatedAt:       refreshed.UpdatedAt,
 		},
+	})
+}
+
+// listTrades handles GET /v1/virtual/portfolios/{id}/trades. Returns up to
+// `limit` trades (default 50, clamped 1..200 by the repo) ordered newest
+// first, with a `next_cursor` to follow for the next page.
+func (h *virtualPortfolioHandler) listTrades(w http.ResponseWriter, r *http.Request) {
+	dev := DeviceFromContext(r.Context())
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"url id is not a valid UUID")
+		return
+	}
+
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_payload",
+				"limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+	var beforeID int64
+	if raw := r.URL.Query().Get("before_id"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_payload",
+				"before_id must be a non-negative integer")
+			return
+		}
+		beforeID = n
+	}
+
+	p, err := h.portfolios.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrVirtualPortfolioNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "portfolio not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if p.DeviceID != dev.DeviceID {
+		writeError(w, http.StatusForbidden, "forbidden",
+			"portfolio belongs to a different device")
+		return
+	}
+
+	trades, next, err := h.trades.ListPage(r.Context(), p.ID, beforeID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	dtos := make([]virtualTradeDTO, 0, len(trades))
+	for _, t := range trades {
+		dtos = append(dtos, virtualTradeDTO{
+			ID:         t.ID,
+			Side:       string(t.Side),
+			CoinID:     t.CoinID,
+			Amount:     t.Amount,
+			Price:      t.Price,
+			ExecutedAt: t.ExecutedAt,
+		})
+	}
+	var cursor *int64
+	if next > 0 {
+		cursor = &next
+	}
+	writeJSON(w, http.StatusOK, virtualTradeHistoryResponse{
+		Trades:     dtos,
+		NextCursor: cursor,
 	})
 }

@@ -57,6 +57,7 @@ func NewServer(
 			r.Delete("/virtual/portfolios/{id}", vh.delete)
 			r.Get("/virtual/portfolios/{id}/quote", vh.quote)
 			r.Post("/virtual/portfolios/{id}/trades", vh.executeTrade)
+			r.Get("/virtual/portfolios/{id}/trades", vh.listTrades)
 		})
 	})
 
