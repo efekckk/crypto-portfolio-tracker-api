@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +23,7 @@ const maxVirtualPortfoliosPerDevice = 5
 // a real CoinGecko round-trip.
 type virtualPortfolioPricing interface {
 	FetchMany(ctx context.Context, coinIDs []string, vsCurrency string) (map[string]virtual.CachedPrice, error)
+	FetchOne(ctx context.Context, coinID string) (virtual.CachedPrice, error)
 }
 
 // virtualPortfolioHandler wraps the /v1/virtual/portfolios endpoints. All
@@ -294,4 +296,106 @@ func (h *virtualPortfolioHandler) delete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusNoContent, nil)
+}
+
+// quoteCoinIDPattern restricts the coin_id query parameter to the same
+// shape CoinGecko returns (lowercase letters, digits, dashes).
+var quoteCoinIDPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// quote handles GET /v1/virtual/portfolios/{id}/quote?coin_id=...
+// Returns the current price and the user-actionable limits for that coin
+// based on cash + existing holdings.
+func (h *virtualPortfolioHandler) quote(w http.ResponseWriter, r *http.Request) {
+	dev := DeviceFromContext(r.Context())
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"url id is not a valid UUID")
+		return
+	}
+
+	coinID := strings.TrimSpace(r.URL.Query().Get("coin_id"))
+	if coinID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"coin_id query parameter is required")
+		return
+	}
+	if !quoteCoinIDPattern.MatchString(coinID) {
+		writeError(w, http.StatusBadRequest, "invalid_payload",
+			"coin_id has an invalid shape")
+		return
+	}
+
+	p, err := h.portfolios.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrVirtualPortfolioNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "portfolio not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if p.DeviceID != dev.DeviceID {
+		writeError(w, http.StatusForbidden, "forbidden",
+			"portfolio belongs to a different device")
+		return
+	}
+
+	trades, err := h.trades.ListAllByPortfolio(r.Context(), p.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	state := virtual.Compute(p.StartingBalance, trades, nil)
+
+	cp, err := h.pricing.FetchOne(r.Context(), coinID)
+	if err != nil {
+		// FetchOne returns a typed error when the coin isn't in the markets
+		// response. We can't easily distinguish that from a generic upstream
+		// failure here, so the heuristic is: if the message mentions "not in
+		// markets" treat as 422, else 502. Match the substring the
+		// PricingService emits (`virtual: coin %q not in markets response`).
+		if strings.Contains(err.Error(), "not in markets") {
+			writeError(w, http.StatusUnprocessableEntity, "unprocessable",
+				"coin not found in markets snapshot")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "upstream_error",
+			"couldn't fetch current price")
+		return
+	}
+
+	price := cp.Coin.CurrentPrice
+	if price <= 0 {
+		writeError(w, http.StatusBadGateway, "upstream_error",
+			"markets response returned a non-positive price")
+		return
+	}
+
+	maxBuy := state.CashBalance / price
+	if maxBuy < 0 {
+		maxBuy = 0
+	}
+	var maxSell float64
+	for _, hold := range state.Holdings {
+		if hold.CoinID == coinID {
+			maxSell = hold.Amount
+			break
+		}
+	}
+
+	name := cp.Coin.Name
+	if name == "" {
+		name = coinID
+	}
+
+	writeJSON(w, http.StatusOK, virtualQuoteResponse{
+		CoinID:        coinID,
+		CoinName:      name,
+		Price:         price,
+		FetchedAt:     cp.FetchedAt,
+		MaxBuyAmount:  maxBuy,
+		MaxSellAmount: maxSell,
+	})
 }

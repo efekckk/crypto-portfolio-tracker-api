@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,6 +27,10 @@ func (stubVirtualPricing) FetchMany(_ context.Context, _ []string, _ string) (ma
 	return map[string]virtual.CachedPrice{}, nil
 }
 
+func (stubVirtualPricing) FetchOne(_ context.Context, _ string) (virtual.CachedPrice, error) {
+	return virtual.CachedPrice{}, nil
+}
+
 // fixedPricing returns a pre-set map regardless of input — handy for
 // asserting computed state with known prices.
 type fixedPricing struct {
@@ -42,11 +47,22 @@ func (f fixedPricing) FetchMany(_ context.Context, ids []string, _ string) (map[
 	return out, nil
 }
 
+func (f fixedPricing) FetchOne(_ context.Context, coinID string) (virtual.CachedPrice, error) {
+	if cp, ok := f.prices[coinID]; ok {
+		return cp, nil
+	}
+	return virtual.CachedPrice{}, fmt.Errorf("virtual: coin %q not in markets response", coinID)
+}
+
 // failingPricing simulates CoinGecko being unreachable.
 type failingPricing struct{}
 
 func (failingPricing) FetchMany(_ context.Context, _ []string, _ string) (map[string]virtual.CachedPrice, error) {
 	return nil, errors.New("upstream down")
+}
+
+func (failingPricing) FetchOne(_ context.Context, _ string) (virtual.CachedPrice, error) {
+	return virtual.CachedPrice{}, errors.New("upstream down")
 }
 
 // domainCoin is a tiny convenience for building Coin values in tests.

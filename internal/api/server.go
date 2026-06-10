@@ -55,6 +55,7 @@ func NewServer(
 			r.Get("/virtual/portfolios", vh.list)
 			r.Get("/virtual/portfolios/{id}", vh.getDetail)
 			r.Delete("/virtual/portfolios/{id}", vh.delete)
+			r.Get("/virtual/portfolios/{id}/quote", vh.quote)
 		})
 	})
 

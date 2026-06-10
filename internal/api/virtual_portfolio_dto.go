@@ -65,3 +65,13 @@ type virtualPortfolioDetailResponse struct {
 	CreatedAt       time.Time           `json:"created_at"`
 	UpdatedAt       time.Time           `json:"updated_at"`
 }
+
+// virtualQuoteResponse is the body of GET /v1/virtual/portfolios/{id}/quote.
+type virtualQuoteResponse struct {
+	CoinID        string    `json:"coin_id"`
+	CoinName      string    `json:"coin_name"`
+	Price         float64   `json:"price"`
+	FetchedAt     time.Time `json:"fetched_at"`
+	MaxBuyAmount  float64   `json:"max_buy_amount"`
+	MaxSellAmount float64   `json:"max_sell_amount"`
+}
